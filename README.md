@@ -1,5 +1,3 @@
-# tf-aws-infra
-
 # AWS Infrastructure with Terraform
 
 This repository contains Terraform configurations to set up AWS infrastructure.
