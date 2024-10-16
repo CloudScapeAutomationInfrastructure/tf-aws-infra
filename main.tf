@@ -10,7 +10,7 @@ resource "time_static" "current" {}
 
 # Create a new VPC with a unique CIDR block and name
 resource "aws_vpc" "main" {
-  cidr_block           = cidrsubnet(var.vpc_cidr_block, 8, random_id.vpc.dec % 256) # Ensure unique /24 CIDR within /16
+  cidr_block        = cidrsubnet(var.vpc_cidr_block, 8, random_id.vpc.dec % 256) # Ensure unique /24 CIDR within /16
   enable_dns_support   = true
   enable_dns_hostnames = true
 
