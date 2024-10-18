@@ -11,7 +11,7 @@ resource "time_static" "current" {}
 
 
 resource "aws_vpc" "main" {
-  cidr_block           = cidrsubnet(var.vpc_cidr_block, 8, random_id.vpc.dec % 256) 
+  cidr_block           = cidrsubnet(var.vpc_cidr_block, 8, random_id.vpc.dec % 256)
   enable_dns_support   = true
   enable_dns_hostnames = true
 
@@ -24,7 +24,7 @@ resource "aws_vpc" "main" {
 resource "aws_subnet" "public" {
   count                   = length(var.availability_zones)
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = cidrsubnet(aws_vpc.main.cidr_block, 4, count.index) 
+  cidr_block              = cidrsubnet(aws_vpc.main.cidr_block, 4, count.index)
   availability_zone       = var.availability_zones[count.index]
   map_public_ip_on_launch = true
 
@@ -37,7 +37,7 @@ resource "aws_subnet" "public" {
 resource "aws_subnet" "private" {
   count             = length(var.availability_zones)
   vpc_id            = aws_vpc.main.id
-  cidr_block        = cidrsubnet(aws_vpc.main.cidr_block, 4, count.index + 3) 
+  cidr_block        = cidrsubnet(aws_vpc.main.cidr_block, 4, count.index + 3)
   availability_zone = var.availability_zones[count.index]
 
   tags = {
@@ -139,14 +139,14 @@ resource "aws_security_group" "app_sg" {
 resource "aws_instance" "web_app" {
   ami                         = var.ami_id
   instance_type               = var.instance_type
-  subnet_id                   = aws_subnet.public[0].id 
-  vpc_security_group_ids       = [aws_security_group.app_sg.id]
-  associate_public_ip_address  = true
-  disable_api_termination      = false
-  key_name                     = var.keyname
+  subnet_id                   = aws_subnet.public[0].id
+  vpc_security_group_ids      = [aws_security_group.app_sg.id]
+  associate_public_ip_address = true
+  disable_api_termination     = false
+  key_name                    = var.keyname
   root_block_device {
-    volume_size          = var.root_volume_size
-    volume_type          = "gp2"
+    volume_size           = var.root_volume_size
+    volume_type           = "gp2"
     delete_on_termination = true
   }
 
@@ -154,3 +154,4 @@ resource "aws_instance" "web_app" {
     Name = "web-app-${random_id.vpc.hex}-${time_static.current.id}-terraform"
   }
 }
+# end of code
