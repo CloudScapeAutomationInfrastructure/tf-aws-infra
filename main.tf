@@ -2,15 +2,12 @@ provider "aws" {
   region = var.aws_region
 }
 
-# Generate unique identifier for VPC
 resource "random_id" "vpc" {
   byte_length = 2
 }
 
-# Static time resource for unique tagging
 resource "time_static" "current" {}
 
-# VPC Configuration
 resource "aws_vpc" "main" {
   cidr_block           = cidrsubnet(var.vpc_cidr_block, 8, random_id.vpc.dec % 256)
   enable_dns_support   = true
@@ -20,7 +17,6 @@ resource "aws_vpc" "main" {
   }
 }
 
-# Public Subnet Configuration
 resource "aws_subnet" "public" {
   count                   = length(var.availability_zones)
   vpc_id                  = aws_vpc.main.id
@@ -32,7 +28,6 @@ resource "aws_subnet" "public" {
   }
 }
 
-# Private Subnet Configuration
 resource "aws_subnet" "private" {
   count             = length(var.availability_zones)
   vpc_id            = aws_vpc.main.id
@@ -43,7 +38,6 @@ resource "aws_subnet" "private" {
   }
 }
 
-# Internet Gateway for Public Subnets
 resource "aws_internet_gateway" "main_gw" {
   vpc_id = aws_vpc.main.id
   tags = {
@@ -51,7 +45,6 @@ resource "aws_internet_gateway" "main_gw" {
   }
 }
 
-# Public Route Table with Internet Access
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
   route {
@@ -63,38 +56,14 @@ resource "aws_route_table" "public" {
   }
 }
 
-# Associate Public Route Table with Public Subnets
 resource "aws_route_table_association" "public_association" {
   count          = length(var.availability_zones)
   subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public.id
 }
 
-# Private Route Table
-resource "aws_route_table" "private" {
+resource "aws_security_group" "lb_sg" {
   vpc_id = aws_vpc.main.id
-  tags = {
-    Name = "private-route-table-${random_id.vpc.hex}-${time_static.current.id}-terraform"
-  }
-}
-
-# Associate Private Route Table with Private Subnets
-resource "aws_route_table_association" "private_association" {
-  count          = length(var.availability_zones)
-  subnet_id      = aws_subnet.private[count.index].id
-  route_table_id = aws_route_table.private.id
-}
-
-# Application Security Group
-resource "aws_security_group" "app_sg" {
-  vpc_id = aws_vpc.main.id
-
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
 
   ingress {
     from_port   = 80
@@ -110,9 +79,31 @@ resource "aws_security_group" "app_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "load-balancer-sg"
+  }
+}
+
+resource "aws_security_group" "app_sg" {
+  vpc_id = aws_vpc.main.id
+
   ingress {
-    from_port   = var.application_port
-    to_port     = var.application_port
+    from_port       = var.application_port
+    to_port         = var.application_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.lb_sg.id]
+  }
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -125,11 +116,10 @@ resource "aws_security_group" "app_sg" {
   }
 
   tags = {
-    Name = "app-sg-${random_id.vpc.hex}-${time_static.current.id}-terraform"
+    Name = "WebAppSecurityGroup"
   }
 }
 
-# Database Security Group
 resource "aws_security_group" "db_sg" {
   vpc_id = aws_vpc.main.id
 
@@ -152,7 +142,6 @@ resource "aws_security_group" "db_sg" {
   }
 }
 
-# Database Parameter Group
 resource "aws_db_parameter_group" "my_db_parameter_group" {
   family = "mysql8.0"
   name   = "webapp-mysql-param-group"
@@ -167,7 +156,6 @@ resource "aws_db_parameter_group" "my_db_parameter_group" {
   }
 }
 
-# Database Subnet Group
 resource "aws_db_subnet_group" "my_db_subnet_group" {
   name       = "my-db-subnet-group"
   subnet_ids = aws_subnet.private[*].id
@@ -177,7 +165,6 @@ resource "aws_db_subnet_group" "my_db_subnet_group" {
   }
 }
 
-# MySQL Database Instance
 resource "aws_db_instance" "db_instance" {
   allocated_storage      = 20
   identifier             = "csye6225"
@@ -194,34 +181,160 @@ resource "aws_db_instance" "db_instance" {
   skip_final_snapshot    = true
 }
 
-# EC2 Instance Configuration for Web Application
-resource "aws_instance" "web_app" {
-  ami                         = var.ami_id
-  instance_type               = var.instance_type
-  subnet_id                   = aws_subnet.public[0].id
-  vpc_security_group_ids      = [aws_security_group.app_sg.id]
-  iam_instance_profile        = aws_iam_instance_profile.ec2_instance_profile.name
-  associate_public_ip_address = true
-  key_name                    = var.keyname
-
-  # User data script for CloudWatch Agent and app setup
-  user_data = <<-EOF
-    #!/bin/bash
-    sudo apt-get update -y
-    sudo apt-get install -y amazon-cloudwatch-agent
-    sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
-      -a start -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
-
-    # Set up database environment variable for Flask app
-    sudo bash -c 'echo "DATABASE_URL=mysql+mysqlconnector://csye6225:password@${aws_db_instance.db_instance.endpoint}/csye6225" > /var/www/html/api/.env'
-
-    # Activate the virtual environment and start the Flask app
-    cd /var/www/html/api
-    source venv/bin/activate
-    nohup python app.py &
-  EOF
+resource "aws_lb" "web_app_alb" {
+  name               = "web-app-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.lb_sg.id]
+  subnets            = aws_subnet.public[*].id
 
   tags = {
-    Name = "web-app-${random_id.vpc.hex}-${time_static.current.id}-terraform"
+    Name = "web-app-alb"
   }
+}
+
+resource "aws_lb_target_group" "web_app_tg" {
+  name     = "web-app-tg"
+  port     = var.application_port
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  health_check {
+    path                = "/v1/healthz"
+    protocol            = "HTTP"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+  }
+
+  tags = {
+    Name = "web-app-tg"
+  }
+}
+
+resource "aws_lb_listener" "web_app_listener" {
+  load_balancer_arn = aws_lb.web_app_alb.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.web_app_tg.arn
+  }
+}
+
+resource "aws_launch_template" "web_app_lt" {
+  name_prefix   = "csye6225_asg"
+  image_id      = var.ami_id
+  instance_type = var.instance_type
+  key_name      = var.keyname
+
+  network_interfaces {
+    associate_public_ip_address = true
+    security_groups             = [aws_security_group.app_sg.id]
+    subnet_id                   = aws_subnet.public[0].id
+  }
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.ec2_instance_profile.name
+  }
+
+  user_data = base64encode(<<-EOF
+#!/bin/bash
+sudo apt-get update -y
+sudo apt-get install -y amazon-cloudwatch-agent
+
+# Start CloudWatch Agent
+sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a start -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
+# Create environment file for Flask app with all required variables
+cat <<EOT > /var/www/html/api/.env
+DATABASE_URL="mysql+mysqlconnector://csye6225:password@${aws_db_instance.db_instance.endpoint}/csye6225"
+SECRET_KEY="your_secret_key"
+S3_BUCKET_NAME="image-upload-s3-bucket-${random_id.s3_bucket.hex}"
+AWS_REGION="us-east-2"
+SENDGRID_API_KEY="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"
+FROM_EMAIL="nag.sr@northeastern.edu"
+REPLY_TO_EMAIL="sri15nag@gmail.com"
+EOT
+
+# Set ownership for the .env file
+sudo chown csye6225:csye6225 /var/www/html/api/.env
+
+# Activate the virtual environment and start the Flask app
+cd /var/www/html/api
+source venv/bin/activate
+nohup python app.py &
+EOF
+  )
+}
+
+resource "aws_autoscaling_group" "web_app_asg" {
+  launch_template {
+    id      = aws_launch_template.web_app_lt.id
+    version = "$Latest"
+  }
+
+  vpc_zone_identifier       = aws_subnet.public[*].id
+  min_size                  = 3
+  max_size                  = 5
+  desired_capacity          = 3
+  health_check_type         = "ELB"
+  health_check_grace_period = 300
+  default_cooldown          = 60
+  target_group_arns         = [aws_lb_target_group.web_app_tg.arn]
+
+  tag {
+    key                 = "Name"
+    value               = "web-app-asg-instance"
+    propagate_at_launch = true
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "cpu_high" {
+  alarm_name          = "cpu_high"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 300
+  statistic           = "Average"
+  threshold           = 5
+  alarm_actions       = [aws_autoscaling_policy.scale_up.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "cpu_low" {
+  alarm_name          = "cpu_low"
+  comparison_operator = "LessThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 300
+  statistic           = "Average"
+  threshold           = 3
+  alarm_actions       = [aws_autoscaling_policy.scale_down.arn]
+}
+
+resource "aws_autoscaling_policy" "scale_up" {
+  name                   = "scale_up_policy"
+  scaling_adjustment     = 1
+  adjustment_type        = "ChangeInCapacity"
+  cooldown               = 300
+  autoscaling_group_name = aws_autoscaling_group.web_app_asg.name
+
+  metric_aggregation_type = "Average"
+  policy_type             = "SimpleScaling"
+}
+
+resource "aws_autoscaling_policy" "scale_down" {
+  name                   = "scale_down_policy"
+  scaling_adjustment     = -1
+  adjustment_type        = "ChangeInCapacity"
+  cooldown               = 300
+  autoscaling_group_name = aws_autoscaling_group.web_app_asg.name
+
+  metric_aggregation_type = "Average"
+  policy_type             = "SimpleScaling"
 }
