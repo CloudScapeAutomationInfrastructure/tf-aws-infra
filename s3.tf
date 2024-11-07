@@ -4,11 +4,11 @@ resource "random_id" "s3_bucket" {
 
 
 resource "aws_s3_bucket" "image_storage" {
-  bucket        = "image-upload-s3-bucket-unique123"
+  bucket        = "image-upload-s3-bucket-${random_id.s3_bucket.hex}"
   force_destroy = true
 
   tags = {
-    Name = "image-upload-s3-bucket-unique123"
+    Name = "image-upload-s3-bucket-${random_id.s3_bucket.hex}"
   }
 }
 

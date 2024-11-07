@@ -30,7 +30,7 @@ resource "aws_iam_policy" "ec2_policy" {
           "s3:GetObject",
           "s3:DeleteObject"
         ],
-        "Resource": "arn:aws:s3:::image-upload-s3-bucket-unique123/*"
+        "Resource": "arn:aws:s3:::image-upload-s3-bucket-${random_id.s3_bucket.hex}/*"
       },
       {
         "Effect": "Allow",
