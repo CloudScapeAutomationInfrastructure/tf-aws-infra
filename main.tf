@@ -255,6 +255,7 @@ DATABASE_URL="mysql+mysqlconnector://csye6225:password@${aws_db_instance.db_inst
 SECRET_KEY="your_secret_key"
 S3_BUCKET_NAME="image-upload-s3-bucket-${random_id.s3_bucket.hex}"
 AWS_REGION="us-east-2"
+SNS_TOPIC_ARN="${aws_sns_topic.user_created.arn}"
 SENDGRID_API_KEY="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"
 FROM_EMAIL="nag.sr@northeastern.edu"
 REPLY_TO_EMAIL="sri15nag@gmail.com"
@@ -286,12 +287,23 @@ resource "aws_autoscaling_group" "web_app_asg" {
   default_cooldown          = 60
   target_group_arns         = [aws_lb_target_group.web_app_tg.arn]
 
+  # Enable metric collection
+  metrics_granularity = "1Minute"
+  enabled_metrics = [
+    "GroupDesiredCapacity",
+    "GroupInServiceInstances",
+    "GroupMinSize",
+    "GroupMaxSize",
+    "GroupTotalInstances"
+  ]
+
   tag {
     key                 = "Name"
     value               = "web-app-asg-instance"
     propagate_at_launch = true
   }
 }
+
 
 resource "aws_cloudwatch_metric_alarm" "cpu_high" {
   alarm_name          = "cpu_high"
