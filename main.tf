@@ -62,6 +62,7 @@ resource "aws_route_table_association" "public_association" {
   route_table_id = aws_route_table.public.id
 }
 
+# Security Groups
 resource "aws_security_group" "lb_sg" {
   vpc_id = aws_vpc.main.id
 
@@ -142,20 +143,7 @@ resource "aws_security_group" "db_sg" {
   }
 }
 
-resource "aws_db_parameter_group" "my_db_parameter_group" {
-  family = "mysql8.0"
-  name   = "webapp-mysql-param-group"
-
-  parameter {
-    name  = "character_set_server"
-    value = "utf8mb4"
-  }
-
-  tags = {
-    Name = "webapp-mysql-param-group"
-  }
-}
-
+# RDS Subnet Group
 resource "aws_db_subnet_group" "my_db_subnet_group" {
   name       = "my-db-subnet-group"
   subnet_ids = aws_subnet.private[*].id
@@ -165,6 +153,27 @@ resource "aws_db_subnet_group" "my_db_subnet_group" {
   }
 }
 
+# RDS Parameter Group
+resource "aws_db_parameter_group" "my_db_parameter_group" {
+  name   = "webapp-mysql-param-group"
+  family = "mysql8.0"
+
+  parameter {
+    name  = "character_set_server"
+    value = "utf8mb4"
+  }
+
+  parameter {
+    name  = "character_set_database"
+    value = "utf8mb4"
+  }
+
+  tags = {
+    Name = "webapp-mysql-param-group"
+  }
+}
+
+# RDS Database Instance
 resource "aws_db_instance" "db_instance" {
   allocated_storage      = 20
   identifier             = "csye6225"
@@ -172,15 +181,20 @@ resource "aws_db_instance" "db_instance" {
   instance_class         = "db.t3.micro"
   db_name                = "csye6225"
   username               = "csye6225"
-  password               = "password"
+  password               = random_password.db_password.result
   db_subnet_group_name   = aws_db_subnet_group.my_db_subnet_group.name
   parameter_group_name   = aws_db_parameter_group.my_db_parameter_group.name
   vpc_security_group_ids = [aws_security_group.db_sg.id]
   publicly_accessible    = false
   multi_az               = false
   skip_final_snapshot    = true
+
+  tags = {
+    Name = "csye6225-db-instance"
+  }
 }
 
+# Load Balancer
 resource "aws_lb" "web_app_alb" {
   name               = "web-app-alb"
   internal           = false
@@ -213,10 +227,39 @@ resource "aws_lb_target_group" "web_app_tg" {
   }
 }
 
-resource "aws_lb_listener" "web_app_listener" {
+# # Fetch existing ACM Certificate for Dev Environment
+# data "aws_acm_certificate" "dev_certificate" {
+#   domain      = "dev.awsclouddomainname.me"
+#   statuses    = ["ISSUED"]
+#   most_recent = true
+# }
+
+# resource "aws_lb_listener" "dev_web_app_listener" {
+#   load_balancer_arn = aws_lb.web_app_alb.arn
+#   port              = 443
+#   protocol          = "HTTPS"
+#   ssl_policy        = "ELBSecurityPolicy-2016-08"
+#   certificate_arn   = data.aws_acm_certificate.dev_certificate.arn
+
+#   default_action {
+#     type             = "forward"
+#     target_group_arn = aws_lb_target_group.web_app_tg.arn
+#   }
+# }
+
+# Fetch existing ACM Certificate for Demo Environment
+data "aws_acm_certificate" "demo_certificate" {
+  domain      = "demo.awsclouddomainname.me"
+  statuses    = ["ISSUED"]
+  most_recent = true
+}
+
+resource "aws_lb_listener" "demo_web_app_listener" {
   load_balancer_arn = aws_lb.web_app_alb.arn
-  port              = 80
-  protocol          = "HTTP"
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-2016-08"
+  certificate_arn   = data.aws_acm_certificate.demo_certificate.arn
 
   default_action {
     type             = "forward"
@@ -242,26 +285,37 @@ resource "aws_launch_template" "web_app_lt" {
 
   user_data = base64encode(<<-EOF
 #!/bin/bash
+# Update instance and install required packages
 sudo apt-get update -y
-sudo apt-get install -y amazon-cloudwatch-agent
+sudo apt-get install -y jq amazon-cloudwatch-agent
 
 # Start CloudWatch Agent
 sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
   -a start -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
 
-# Create environment file for Flask app with all required variables
+# Fetch secrets from AWS Secrets Manager
+DB_SECRET=$(aws secretsmanager get-secret-value --secret-id database-credentials --region us-east-2 --query 'SecretString' --output text)
+EMAIL_SECRET=$(aws secretsmanager get-secret-value --secret-id email-service-credentials --region us-east-2 --query 'SecretString' --output text)
+
+# Parse the secrets
+DATABASE_URL=$(echo $DB_SECRET | jq -r '.DATABASE_URL')
+SENDGRID_API_KEY=$(echo $EMAIL_SECRET | jq -r '.SENDGRID_API_KEY')
+FROM_EMAIL=$(echo $EMAIL_SECRET | jq -r '.FROM_EMAIL')
+REPLY_TO_EMAIL=$(echo $EMAIL_SECRET | jq -r '.REPLY_TO_EMAIL')
+
+# Create the .env file with configuration
 cat <<EOT > /var/www/html/api/.env
-DATABASE_URL="mysql+mysqlconnector://csye6225:password@${aws_db_instance.db_instance.endpoint}/csye6225"
+DATABASE_URL="$DATABASE_URL"
 SECRET_KEY="your_secret_key"
 S3_BUCKET_NAME="image-upload-s3-bucket-${random_id.s3_bucket.hex}"
 AWS_REGION="us-east-2"
 SNS_TOPIC_ARN="${aws_sns_topic.user_created.arn}"
-SENDGRID_API_KEY="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"
-FROM_EMAIL="nag.sr@northeastern.edu"
-REPLY_TO_EMAIL="sri15nag@gmail.com"
+SENDGRID_API_KEY="$SENDGRID_API_KEY"
+FROM_EMAIL="$FROM_EMAIL"
+REPLY_TO_EMAIL="$REPLY_TO_EMAIL"
 EOT
 
-# Set ownership for the .env file
+# Set ownership of the .env file
 sudo chown csye6225:csye6225 /var/www/html/api/.env
 
 # Activate the virtual environment and start the Flask app
@@ -283,11 +337,10 @@ resource "aws_autoscaling_group" "web_app_asg" {
   max_size                  = 5
   desired_capacity          = 3
   health_check_type         = "ELB"
-  health_check_grace_period = 300
+  health_check_grace_period = 60
   default_cooldown          = 60
   target_group_arns         = [aws_lb_target_group.web_app_tg.arn]
 
-  # Enable metric collection
   metrics_granularity = "1Minute"
   enabled_metrics = [
     "GroupDesiredCapacity",
@@ -304,14 +357,13 @@ resource "aws_autoscaling_group" "web_app_asg" {
   }
 }
 
-
 resource "aws_cloudwatch_metric_alarm" "cpu_high" {
   alarm_name          = "cpu_high"
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   metric_name         = "CPUUtilization"
   namespace           = "AWS/EC2"
-  period              = 300
+  period              = 60
   statistic           = "Average"
   threshold           = 5
   alarm_actions       = [aws_autoscaling_policy.scale_up.arn]
@@ -323,7 +375,7 @@ resource "aws_cloudwatch_metric_alarm" "cpu_low" {
   evaluation_periods  = 1
   metric_name         = "CPUUtilization"
   namespace           = "AWS/EC2"
-  period              = 300
+  period              = 60
   statistic           = "Average"
   threshold           = 3
   alarm_actions       = [aws_autoscaling_policy.scale_down.arn]
@@ -333,7 +385,7 @@ resource "aws_autoscaling_policy" "scale_up" {
   name                   = "scale_up_policy"
   scaling_adjustment     = 1
   adjustment_type        = "ChangeInCapacity"
-  cooldown               = 300
+  cooldown               = 60
   autoscaling_group_name = aws_autoscaling_group.web_app_asg.name
 
   metric_aggregation_type = "Average"
@@ -344,7 +396,7 @@ resource "aws_autoscaling_policy" "scale_down" {
   name                   = "scale_down_policy"
   scaling_adjustment     = -1
   adjustment_type        = "ChangeInCapacity"
-  cooldown               = 300
+  cooldown               = 60
   autoscaling_group_name = aws_autoscaling_group.web_app_asg.name
 
   metric_aggregation_type = "Average"

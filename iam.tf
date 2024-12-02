@@ -51,10 +51,34 @@ resource "aws_iam_policy" "ec2_policy" {
   })
 }
 
-# Attach Policy to EC2 Role
+# Route 53 Policy for EC2 Role
+resource "aws_iam_policy" "route53_policy" {
+  name = "Route53AccessPolicy"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "route53:GetHostedZone",
+          "route53:ListHostedZones",
+          "route53:ChangeResourceRecordSets"
+        ],
+        Resource = "arn:aws:route53:::hostedzone/Z02358762FHWIMLLNZDGB"
+      }
+    ]
+  })
+}
+
+# Attach Policies to EC2 Role
 resource "aws_iam_role_policy_attachment" "ec2_policy_attachment" {
   role       = aws_iam_role.ec2_role.name
   policy_arn = aws_iam_policy.ec2_policy.arn
+}
+
+resource "aws_iam_role_policy_attachment" "route53_policy_attachment" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = aws_iam_policy.route53_policy.arn
 }
 
 # IAM Instance Profile for EC2

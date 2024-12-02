@@ -4,6 +4,12 @@ variable "aws_region" {
   default     = "us-east-2"
 }
 
+# Project Name
+variable "project" {
+  description = "Project name for tagging and resource identification"
+  default     = "WebAppProject"
+}
+
 # VPC Configuration
 variable "vpc_cidr_block" {
   description = "Base CIDR block for the VPC"
@@ -75,6 +81,16 @@ variable "sns_topic_name" {
   default     = "user-created-topic"
 }
 
+variable "sns_topic_user_creation_name" {
+  description = "SNS topic name for user creation"
+  default     = "user-created-topic"
+}
+
+variable "sns_topic_user_verified_name" {
+  description = "SNS topic name for user verification"
+  default     = "user-verified-topic"
+}
+
 # Lambda Configuration
 variable "lambda_function_name" {
   description = "Lambda function name"
@@ -84,6 +100,21 @@ variable "lambda_function_name" {
 variable "lambda_runtime" {
   description = "Runtime environment for the Lambda function"
   default     = "python3.8"
+}
+
+variable "lambda_package_path" {
+  description = "Path to the deployment package for the Lambda function"
+  default     = "C:/Users/sri15/Downloads/lambdacode_assig09/lambda_function.zip"
+}
+
+variable "lambda_timeout" {
+  description = "Timeout for the Lambda function in seconds"
+  default     = 30
+}
+
+variable "lambda_memory_size" {
+  description = "Memory size for the Lambda function in MB"
+  default     = 256
 }
 
 # RDS Configuration
@@ -114,6 +145,11 @@ variable "domain_name" {
 variable "from_email" {
   description = "Email address used for sending verification emails"
   default     = "nag.sr@northeastern.edu"
+}
+
+variable "reply_to_email" {
+  description = "Reply-to email address for emails sent"
+  default     = "sri15nag@gmail.com"
 }
 
 # IAM Configuration
@@ -156,9 +192,22 @@ variable "enable_kms_encryption" {
   default     = true
 }
 
-variable "kms_key_alias" {
-  description = "Alias for KMS key used for encryption"
-  default     = "alias/sns-topic-key"
+variable "kms_key_aliases" {
+  description = "List of KMS key aliases for various resources"
+  type        = map(string)
+  default = {
+    ec2_kms_key        = "alias/ec2-kms-key"
+    rds_kms_key        = "alias/rds-kms-key"
+    s3_kms_key         = "alias/s3-kms-key"
+    secrets_kms_key    = "alias/secrets-kms-key"
+    sensitive_data_key = "alias/sensitive-data-kms-key"
+  }
+}
+
+# SendGrid Configuration
+variable "sendgrid_api_key" {
+  description = "SendGrid API key for sending emails"
+  type        = string
 }
 
 # Additional Outputs
@@ -167,18 +216,17 @@ variable "output_sns_topic_arn" {
   type        = bool
   default     = true
 }
-variable "sns_topic_user_creation_name" {
-  description = "SNS topic name for user creation"
-  default     = "user-created-topic"
+
+# Certificate Configuration
+variable "demo_certificate_arn" {
+  description = "ARN of the ACM certificate for the demo environment"
+  type        = string
+  default     = "arn:aws:acm:us-east-2:311141531170:certificate/4761ced3-18ed-4606-8a1b-168f364bbae2"
 }
 
-variable "sns_topic_user_verified_name" {
-  description = "SNS topic name for user verification"
-  default     = "user-verified-topic"
-}
+variable "dev_certificate_arn" {
+  description = "ARN of the ACM certificate for the dev environment"
+  type        = string
+  default     = "arn:aws:acm:us-east-2:122610501029:certificate/6f50c425-4a73-4c1a-8dd5-617c78988338"
 
-
-
-variable "sendgrid_api_key" {
-  description = "SendGrid API key for sending emails"
 }
