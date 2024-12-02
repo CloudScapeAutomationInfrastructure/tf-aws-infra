@@ -4,28 +4,28 @@ resource "aws_lambda_function" "email_verification" {
   handler       = "lambda_function.lambda_handler"
   runtime       = var.lambda_runtime
   role          = aws_iam_role.lambda_execution_role.arn
-  filename      = "C:/Users/sri15/Downloads/lambdacode/lambda_function.zip"
+  filename      = var.lambda_package_path
 
   environment {
     variables = {
-      SNS_TOPIC_ARN    = aws_sns_topic.user_created.arn
-      DOMAIN_NAME      = var.domain_name
-      FROM_EMAIL       = var.from_email
-      SENDGRID_API_KEY = var.sendgrid_api_key
+      SNS_TOPIC_ARN = aws_sns_topic.user_created.arn
+      DOMAIN_NAME   = var.domain_name
+      FROM_EMAIL    = var.from_email
+      SECRETS_ARN   = aws_secretsmanager_secret.email_service_credentials.arn
     }
   }
 
-  timeout     = 30
-  memory_size = 256
+  timeout     = var.lambda_timeout
+  memory_size = var.lambda_memory_size
   description = "Lambda function to send email verification and track in RDS."
 
   tags = {
-    Environment = "Development"
-    Project     = "EmailVerification"
+    Environment = var.environment
+    Project     = var.project
   }
 }
 
-# Lambda Permission: Allow SNS to invoke the Lambda function
+# Lambda Permission to Allow SNS to Invoke the Lambda Function
 resource "aws_lambda_permission" "allow_sns_invoke" {
   statement_id  = "AllowSNSToInvokeLambda"
   action        = "lambda:InvokeFunction"
