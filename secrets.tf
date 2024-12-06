@@ -18,7 +18,7 @@ resource "aws_secretsmanager_secret" "database_credentials" {
 resource "aws_secretsmanager_secret_version" "database_credentials_version" {
   secret_id = aws_secretsmanager_secret.database_credentials.id
   secret_string = jsonencode({
-    DATABASE_URL = "mysql+mysqlconnector://csye6225:${random_password.db_password.result}@${aws_db_instance.db_instance.endpoint}/csye6225"
+    password = random_password.db_password.result
   })
 }
 

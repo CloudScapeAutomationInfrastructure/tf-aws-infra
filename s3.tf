@@ -3,7 +3,6 @@ resource "random_id" "s3_bucket" {
   byte_length = 2
 }
 
-
 resource "aws_s3_bucket" "image_storage" {
   bucket        = "image-upload-s3-bucket-${random_id.s3_bucket.hex}"
   force_destroy = true
@@ -14,7 +13,6 @@ resource "aws_s3_bucket" "image_storage" {
     Project     = var.project
   }
 }
-
 
 resource "aws_s3_bucket_lifecycle_configuration" "image_storage_lifecycle" {
   bucket = aws_s3_bucket.image_storage.id
@@ -29,7 +27,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "image_storage_lifecycle" {
     }
   }
 }
-
 
 resource "aws_s3_bucket_versioning" "image_storage_versioning" {
   bucket = aws_s3_bucket.image_storage.id
@@ -59,12 +56,16 @@ resource "aws_s3_bucket_policy" "image_storage_policy" {
     Version = "2012-10-17",
     Statement = [
       {
-        Sid       = "DenyPublicAccess",
+        Sid       = "DenyUnsecureTransport",
         Effect    = "Deny",
         Principal = "*",
-        Action    = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+        Action    = "s3:*",
         Resource  = "${aws_s3_bucket.image_storage.arn}/*",
-        Condition = { Bool = { "aws:SecureTransport" : "false" } }
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" : "false"
+          }
+        }
       },
       {
         Sid       = "DenyUnencryptedUploads",
@@ -72,7 +73,11 @@ resource "aws_s3_bucket_policy" "image_storage_policy" {
         Principal = "*",
         Action    = "s3:PutObject",
         Resource  = "${aws_s3_bucket.image_storage.arn}/*",
-        Condition = { StringNotEquals = { "s3:x-amz-server-side-encryption" : "aws:kms" } }
+        Condition = {
+          StringNotEquals = {
+            "s3:x-amz-server-side-encryption" : "aws:kms"
+          }
+        }
       }
     ]
   })
