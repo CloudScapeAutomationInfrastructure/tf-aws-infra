@@ -119,6 +119,7 @@ resource "aws_security_group" "app_sg" {
   tags = {
     Name = "WebAppSecurityGroup"
   }
+
 }
 
 resource "aws_security_group" "db_sg" {
@@ -188,6 +189,8 @@ resource "aws_db_instance" "db_instance" {
   publicly_accessible    = false
   multi_az               = false
   skip_final_snapshot    = true
+  storage_encrypted      = true
+  kms_key_id             = aws_kms_key.rds_kms_key.arn
 
   tags = {
     Name = "csye6225-db-instance"
@@ -282,30 +285,43 @@ resource "aws_launch_template" "web_app_lt" {
   iam_instance_profile {
     name = aws_iam_instance_profile.ec2_instance_profile.name
   }
+  block_device_mappings {
+    device_name = "/dev/xvda"
+
+    ebs {
+      volume_size           = 30
+      volume_type           = "gp2"
+      kms_key_id            = aws_kms_key.ec2_kms_key.arn
+      delete_on_termination = true
+      encrypted             = true
+    }
+  }
 
   user_data = base64encode(<<-EOF
 #!/bin/bash
-# Update instance and install required packages
+# Install unzip (if not already installed)
 sudo apt-get update -y
-sudo apt-get install -y jq amazon-cloudwatch-agent
+sudo apt-get install -y unzip jq
 
-# Start CloudWatch Agent
-sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
-  -a start -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+# Download and install AWS CLI v2
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
 
 # Fetch secrets from AWS Secrets Manager
-DB_SECRET=$(aws secretsmanager get-secret-value --secret-id database-credentials --region us-east-2 --query 'SecretString' --output text)
+DB_SECRET=$(aws secretsmanager get-secret-value --secret-id database-credentials --region us-east-2 --query 'SecretString' --output text | jq -r '.password')
 EMAIL_SECRET=$(aws secretsmanager get-secret-value --secret-id email-service-credentials --region us-east-2 --query 'SecretString' --output text)
 
-# Parse the secrets
-DATABASE_URL=$(echo $DB_SECRET | jq -r '.DATABASE_URL')
+# Fetch the RDS endpoint dynamically
+
+# Parse email secrets
 SENDGRID_API_KEY=$(echo $EMAIL_SECRET | jq -r '.SENDGRID_API_KEY')
 FROM_EMAIL=$(echo $EMAIL_SECRET | jq -r '.FROM_EMAIL')
 REPLY_TO_EMAIL=$(echo $EMAIL_SECRET | jq -r '.REPLY_TO_EMAIL')
 
-# Create the .env file with configuration
-cat <<EOT > /var/www/html/api/.env
-DATABASE_URL="$DATABASE_URL"
+# Create the .env file
+cat <<EOF_ENV > /var/www/html/api/.env
+DATABASE_URL="mysql+mysqlconnector://csye6225:$DB_SECRET@${aws_db_instance.db_instance.endpoint}/csye6225"
 SECRET_KEY="your_secret_key"
 S3_BUCKET_NAME="image-upload-s3-bucket-${random_id.s3_bucket.hex}"
 AWS_REGION="us-east-2"
@@ -313,18 +329,34 @@ SNS_TOPIC_ARN="${aws_sns_topic.user_created.arn}"
 SENDGRID_API_KEY="$SENDGRID_API_KEY"
 FROM_EMAIL="$FROM_EMAIL"
 REPLY_TO_EMAIL="$REPLY_TO_EMAIL"
-EOT
+EOF_ENV
 
 # Set ownership of the .env file
 sudo chown csye6225:csye6225 /var/www/html/api/.env
 
-# Activate the virtual environment and start the Flask app
+# Start the application
 cd /var/www/html/api
 source venv/bin/activate
 nohup python app.py &
+
+# Reload and restart the Flask service
+sudo systemctl daemon-reload
+sudo systemctl restart flask-api.service
 EOF
   )
 }
+# resource "aws_security_group_rule" "allow_lb_to_app" {
+#   type                     = "ingress"
+#   from_port                = var.application_port
+#   to_port                  = var.application_port
+#   protocol                 = "tcp"
+#   security_group_id        = aws_security_group.app_sg.id
+#   source_security_group_id = aws_security_group.lb_sg.id
+#   lifecycle {
+#     prevent_destroy       = true
+#     create_before_destroy = true
+#   }
+# }
 
 resource "aws_autoscaling_group" "web_app_asg" {
   launch_template {
@@ -333,12 +365,12 @@ resource "aws_autoscaling_group" "web_app_asg" {
   }
 
   vpc_zone_identifier       = aws_subnet.public[*].id
-  min_size                  = 3
-  max_size                  = 5
-  desired_capacity          = 3
+  min_size                  = 1 //3
+  max_size                  = 1 //3
+  desired_capacity          = 1 //3
   health_check_type         = "ELB"
-  health_check_grace_period = 60
-  default_cooldown          = 60
+  health_check_grace_period = 300
+  default_cooldown          = 300
   target_group_arns         = [aws_lb_target_group.web_app_tg.arn]
 
   metrics_granularity = "1Minute"
@@ -363,7 +395,7 @@ resource "aws_cloudwatch_metric_alarm" "cpu_high" {
   evaluation_periods  = 1
   metric_name         = "CPUUtilization"
   namespace           = "AWS/EC2"
-  period              = 60
+  period              = 300
   statistic           = "Average"
   threshold           = 5
   alarm_actions       = [aws_autoscaling_policy.scale_up.arn]
@@ -375,7 +407,7 @@ resource "aws_cloudwatch_metric_alarm" "cpu_low" {
   evaluation_periods  = 1
   metric_name         = "CPUUtilization"
   namespace           = "AWS/EC2"
-  period              = 60
+  period              = 300
   statistic           = "Average"
   threshold           = 3
   alarm_actions       = [aws_autoscaling_policy.scale_down.arn]
@@ -385,7 +417,7 @@ resource "aws_autoscaling_policy" "scale_up" {
   name                   = "scale_up_policy"
   scaling_adjustment     = 1
   adjustment_type        = "ChangeInCapacity"
-  cooldown               = 60
+  cooldown               = 300
   autoscaling_group_name = aws_autoscaling_group.web_app_asg.name
 
   metric_aggregation_type = "Average"
@@ -396,7 +428,7 @@ resource "aws_autoscaling_policy" "scale_down" {
   name                   = "scale_down_policy"
   scaling_adjustment     = -1
   adjustment_type        = "ChangeInCapacity"
-  cooldown               = 60
+  cooldown               = 300
   autoscaling_group_name = aws_autoscaling_group.web_app_asg.name
 
   metric_aggregation_type = "Average"
